@@ -1,9 +1,9 @@
 from dataclasses import dataclass
+from typing import Tuple
 
 import numpy as np
 import pandas as pd
-from sklearn.metrics import r2_score
-from tqdm.auto import tqdm
+from loguru import logger
 
 
 @dataclass
@@ -14,63 +14,32 @@ class DataPoint:
     state: np.ndarray
 
 
-class PredictionModel:
-    def predict(self, data_point: DataPoint) -> np.ndarray:
-        # return current state as dummy prediction
-        return data_point.state
+def train_val_split(
+    df: pd.DataFrame,
+    val_size: int,
+    seed: int = 42
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    """Split dataframe into training and validation sets based on unique sequence indices.
 
+    Args:
+        df (pd.DataFrame): Input dataframe containing a 'seq_ix' column
+        val_size (int): Number of unique sequences to include in the validation set
+        seed (int, optional): Random seed for reproducibility. Defaults to 42.
 
-class ScorerStepByStep:
-    def __init__(self, dataset_path: str):
-        self.dataset = pd.read_parquet(dataset_path)
+    Returns:
+        Tuple[pd.DataFrame, pd.DataFrame]: DataFrames for training and validation sets.
+    """
 
-        # Calc feature dimension: first 3 columns are seq_ix, step_in_seq & need_prediction
-        self.dim = self.dataset.shape[1] - 3
-        self.features = self.dataset.columns[3:]
+    logger.info(f"Splitting to train/val. Dataset size: {len(df)}")
+    seq_indices = df['seq_ix'].unique()
+    rng = np.random.default_rng(seed)
+    rng.shuffle(seq_indices)
 
-    def score(self, model: PredictionModel) -> dict:
-        predictions = []
-        targets = []
+    val_seq_indices = seq_indices[:val_size]
+    train_seq_indices = seq_indices[val_size:]
 
-        next_prediction = None
+    df_train = df[df['seq_ix'].isin(train_seq_indices)].reset_index(drop=True)
+    df_val = df[df['seq_ix'].isin(val_seq_indices)].reset_index(drop=True)
+    logger.info(f"Train size: {len(df_train)}, Val size: {len(df_val)}")
 
-        for row in tqdm(self.dataset.values):
-            seq_ix = row[0]
-            step_in_seq = row[1]
-            need_prediction = row[2]
-            new_state = row[3:]  # the rest is state vector
-            #
-            if next_prediction is not None:
-                predictions.append(next_prediction)
-                targets.append(new_state)
-            #
-            data_point = DataPoint(seq_ix, step_in_seq, need_prediction, new_state)
-            next_prediction = model.predict(data_point)
-
-            self.check_prediction(data_point, next_prediction)
-
-        # report metrics
-        return self.calc_metrics(np.array(predictions), np.array(targets))
-
-    def check_prediction(self, data_point: DataPoint, prediction: np.ndarray):
-        if not data_point.need_prediction:
-            if prediction is not None:
-                raise ValueError(f"Prediction is not needed for {data_point}")
-            return
-
-        if prediction is None:
-            raise ValueError(f"Prediction is required for {data_point}")
-
-        if prediction.shape[0] != self.dim:
-            raise ValueError(
-                f"Prediction has wrong shape: {prediction.shape[0]} != {self.dim}"
-            )
-
-    def calc_metrics(self, predictions: np.ndarray, targets: np.ndarray) -> dict:
-        scores = {}
-        for ix_feature, feature in enumerate(self.features):
-            scores[feature] = r2_score(
-                targets[:, ix_feature], predictions[:, ix_feature]
-            )
-        scores["mean_r2"] = np.mean(list(scores.values()))
-        return scores
+    return df_train, df_val
