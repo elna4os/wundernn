@@ -13,7 +13,7 @@ from src.utils import DataPoint
 class PredictionModel:
     def __init__(self):
         # Data description
-        self.ema_alphas = [0.05, 0.3, 0.8]
+        self.ema_alphas = [0.05]
         self.feature_cols = [str(i) for i in range(32)]
         self.ema_cols = []
         for alpha in self.ema_alphas:
